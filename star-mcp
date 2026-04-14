@@ -1,0 +1,9 @@
+阅读pdf的mcp
+{
+  "mcpServers": {
+    "pagebraid": {
+      "command": "npx",
+      "args": ["-y", "pagebraid-mcp"]
+    }
+  }
+}
