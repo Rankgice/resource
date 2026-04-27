@@ -1,0 +1,4 @@
+请你帮我读取internal/model/category.go，
+观察其中的CategoryOrderField、CategoryQueryParams、CategoryDeleteParams、CategoryUpdateParams和UpdateByParam、UpdateByParamWithTx、DeleteByParam、DeleteByParamWithTx、ListByParam、ListByParamWithTx方法.
+我将其称为典范，params可能存在空指针问题，但我觉得不需要担心，如果空指针，说明是业务侧使用不规范。
+就按照这个典范，将其推广到其他model，并且将这种规则写入rule.md的model层规范中，任何model都必须拥有这六个方法
