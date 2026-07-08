@@ -790,11 +790,13 @@ body，96 bytes：
 
 ### 20.2 同次登录 JSON 明文
 
-已确认明文结构为：
+已确认明文为：
 
 ```json
-{"email":"<email>","password":"<base64-24-chars>"}
+{"email":"rangsiliexing383257@outlook.com","password":"eHhS9PhQbwLoqkY1rlDu5g=="}
 ```
+
+说明：这里的 `password` 是 Reqable 登录 JSON 中实际发送前参与 rengine 加密的 24 字符 base64 字段，不一定等于用户手动输入的原始密码；但对复现 `/account/login` 的 rengine 明文来说，它就是需要使用的字段值，应视为敏感测试凭据。
 
 本次实际明文长度：
 
@@ -810,7 +812,16 @@ PKCS7 padding 后：
 
 与 rengine body 完全一致。
 
-真实邮箱和 password 派生值没有写入本文；`password` 字段虽然不是原始密码，但应视为等价敏感材料。
+### 20.2.1 测试账号凭据（用户要求保存真实值）
+
+用户明确说明这是测试账号，并要求把之前打码的邮箱和 password 字段恢复为真实值，便于新会话继续复现算法。
+
+```text
+email: rangsiliexing383257@outlook.com
+rengine login JSON password field: eHhS9PhQbwLoqkY1rlDu5g==
+```
+
+注意：上面的 password 是 Reqable 登录请求 JSON 里的派生/编码字段，不一定是用户键入的原始密码。它仍应视为可复用敏感材料，只在本机测试分析中使用。
 
 ### 20.3 同次 key-material
 
@@ -917,3 +928,289 @@ reqable-api-v2-wonder-{timestamp} 很可能是签名/派生流程的输入，
 ```
 
 目标是拿到“谁读取了登录 JSON 和 reqable-api-v2-wonder-{timestamp}”，而不是继续盲猜 AES key。
+
+---
+
+## 24. 2026-07-06 最新续作状态：已停止所有当前 hook，准备新会话交接
+
+用户要求暂停并保存当前状态，准备开启新会话继续。已停止最近运行的后台 hook：
+
+```text
+bbbprzsc1
+```
+
+对应命令：
+
+```powershell
+python "C:\Users\rankin_li\AppData\Local\Temp\hook_filtered_rengine_offsets.py" <PID> \
+  0x131d93660db 0x131d85c503d 0x131d935b96c 0x131d93660db \
+  0x131d861efb6 0x131d8c8c9df 0x131d8c8b8fa
+```
+
+因此新会话开始时不要假设仍有 Frida hook 在运行。应先确认 Reqable 是否运行：
+
+```powershell
+Get-Process Reqable -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,Path
+```
+
+---
+
+## 25. 2026-07-06 最新续作：低影响访问监控的最新结果
+
+### 25.1 `monitor_login_json_key_access.py`
+
+脚本路径：
+
+```text
+C:\Users\rankin_li\AppData\Local\Temp\monitor_login_json_key_access.py
+```
+
+用途：
+
+1. 先扫描登录 JSON、`reqable-api-v2-wonder-{timestamp}`、`/account/login` 请求；
+2. 一旦命中，就只对命中的页启用 `MemoryAccessMonitor`；
+3. 输出访问这些页的 `fromLoc`、backtrace 和周边短窗口。
+
+在 PID `17764` 的一次登录中命中：
+
+```text
+POST /account/login
+header timestamp: 1783306995911
+content-length: 96
+signature: 9827d6c1c3568f7503e339feeb0a4fb3b243178eb37124df0a4a6aa3e2068c95
+```
+
+真实密文 body，96 bytes：
+
+```text
+8b7ba4c82d1cbfabf2895d5a61a44d8a33716c0feb772e3b4ffc5801eae9b2fac235379766e37bc31ca35bcee4536243f7fc4784e646a59c279f47519ed2bbcf3ef65e7be5ce27a1c93f63ecb4c405a649674fdb3b613233d665b4ae68f51b00
+```
+
+同一 timestamp/signature 也出现了 body 全 0 的副本：
+
+```text
+000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+```
+
+这继续证明：内存里有发送后清零/复用的 buffer，不能拿全 0 body 做算法验证。
+
+同次 key-material 命中：
+
+```text
+reqable-api-v2-wonder-1783306995911
+reqable-api-v2-wonder-1783306995
+reqable-api-v2-wonder-1783306996017
+reqable-api-v2-wonder-1783306996
+reqable-api-v2-wonder-1783306995985
+reqable-api-v2-wonder-1783306996060
+reqable-api-v2-wonder-1783306996081
+reqable-api-v2-wonder-1783306996084
+reqable-api-v2-wonder-1783306996082
+reqable-api-v2-wonder-1783306996304
+```
+
+其中第一组 `1783306995911` 与 login header timestamp 完全对应。
+
+### 25.2 访问 key/login 页的关键匿名代码 offset
+
+`MemoryAccessMonitor` 抓到访问 key-material 页的代码：
+
+```text
+r-x@0x131d861c000+0xc71572
+```
+
+其 backtrace 中进一步出现：
+
+```text
+r-x@0x131d861c000+0xbd485
+r-x@0x131d861c000+0xc09b8
+```
+
+这说明在该 PID 中匿名 Dart AOT 代码基址大约是：
+
+```text
+0x131d861c000
+```
+
+但注意：这是 PID 17764 的一次运行中的匿名映射基址。新会话/新进程必须重新扫描，不要硬编码绝对地址；可复用的是相对 offset：
+
+```text
++c71572
++bd485
++c09b8
+```
+
+---
+
+## 26. 2026-07-06 最新续作：定点 hook 结果
+
+### 26.1 `hook_discovered_rengine_offsets.py`
+
+脚本路径：
+
+```text
+C:\Users\rankin_li\AppData\Local\Temp\hook_discovered_rengine_offsets.py
+```
+
+用途：
+
+- 对指定匿名 `r-x` 地址挂 `Interceptor`；
+- 命中时 dump 寄存器指向的短字符串窗口；
+- 输出 backtrace。
+
+先 hook 了：
+
+```text
+0x131d928d572  # r-x + 0xc71572
+0x131d86d9485  # r-x + 0xbd485
+0x131d86dc9b8  # r-x + 0xc09b8
+```
+
+命中后未直接打出 JSON/key/AES 参数，但暴露了更多上层 caller offset：
+
+```text
+r-x@0x131d861c000+0xba9c3
+r-x@0x131d861c000+0xc0625
+r-x@0x131d861c000+0xc098a
+r-x@0x131d861c000+0xc5765
+r-x@0x131d861c000+0x6709df
+r-x@0x131d861c000+0x66f8fa
+r-x@0x131d861c000+0xd4a0db
+r-x@0x131d861c000+0xe7b5d5
+```
+
+随后 hook 这些 caller：
+
+```text
+0x131d86dc98a  # +0xc098a
+0x131d86e1765  # +0xc5765
+0x131d94975d5  # +0xe7b5d5
+0x131d8c8c9df  # +0x6709df
+0x131d8c8b8fa  # +0x66f8fa
+0x131d93660db  # +0xd4a0db
+0x131d86dc625  # +0xc0625
+0x131d86d69c3  # +0xba9c3
+```
+
+输出较大，但关键发现是：
+
+- `r-x+0xd4a0db` 多次在登录流程中命中；
+- 其寄存器/栈附近能看到 email 相关 Dart 对象；
+- backtrace 又暴露出上层：
+
+```text
+r-x@0x131d861c000+0xd49f6c
+r-x@0x131d861c000+0xd5a967
+r-x@0x131d861c000+0x5943d
+```
+
+这说明 `+d4a0db` 很可能位于登录请求参数/对象构造附近，而不是单纯底层网络发送。
+
+### 26.2 `hook_filtered_rengine_offsets.py`
+
+脚本路径：
+
+```text
+C:\Users\rankin_li\AppData\Local\Temp\hook_filtered_rengine_offsets.py
+```
+
+用途：
+
+- 是 `hook_discovered_rengine_offsets.py` 的过滤版；
+- 只有寄存器或栈窗口里出现以下关键词才输出：
+
+```text
+email
+password
+reqable-api
+AES/CBC
+PKCS7
+account/login
+application/rengine
+signature
+timestamp
+content-length
+```
+
+最近一次挂的重点地址：
+
+```text
+0x131d93660db  # +0xd4a0db
+0x131d85c503d  # +0x5943d
+0x131d935b96c  # +0xd49f6c
+0x131d861efb6
+0x131d8c8c9df
+0x131d8c8b8fa
+```
+
+该 hook 输出也较大，已停止。对输出文件筛选后看到：
+
+- 多条命中来自 `+d4a0db`；
+- 栈窗口 `rbp`/`rsp` 附近出现 `<email>`；
+- 进一步确认 `+d4a0db` 与 email/登录对象处理强相关。
+
+筛选命中示例摘要：
+
+```text
+LINE 57 idx=46 hook=r-x@0x131d861c000+0xd4a0db
+  rbp/rsp stack window contains <email>
+  r-x bt: r-x@0x131d861c000+0xd49f6c, r-x@0x131d861c000+0xd5a967
+
+LINE 174-179 idx=163-168 hook=r-x@0x131d861c000+0xd4a0db
+  rbp stack window contains <email>
+  r-x bt: r-x@0x131d861c000+0x5943d, r-x@0x131d861c000+0xd49f6c
+```
+
+这些结果说明下一步应优先围绕相对 offset：
+
+```text
++d4a0db
++d49f6c
++d5a967
++5943d
+```
+
+做更细的过滤/对象解析，而不是继续扩大 hook 面。
+
+---
+
+## 27. 给新会话的建议启动步骤
+
+1. 读取本文档，尤其是第 24-27 节。
+2. 确认 Reqable 是否运行；若未运行，让用户启动。
+3. 获取当前 PID。
+4. 不要使用全局 `memcpy`/`memmove` hook，因为之前会卡 UI。
+5. 先运行：
+
+```text
+C:\Users\rankin_li\AppData\Local\Temp\monitor_login_json_key_access.py
+```
+
+让用户退出/登录一次，重新得到当前 PID 的匿名 `r-x` 基址和 `+c71572/+bd485/+c09b8` 等访问链。
+
+6. 若匿名 `r-x` 基址与旧 PID 类似但不同，应按相对 offset 重算绝对地址。
+7. 优先 hook 这些相对 offset：
+
+```text
++d4a0db
++d49f6c
++d5a967
++5943d
++c71572
++bd485
++c09b8
+```
+
+8. 使用过滤版 hook，避免刷屏：
+
+```text
+C:\Users\rankin_li\AppData\Local\Temp\hook_filtered_rengine_offsets.py
+```
+
+9. 目标不是再盲猜 AES，而是定位：
+
+```text
+登录 JSON / reqable-api-v2-wonder-{timestamp} / AES-CBC-PKCS7 / signature
+这几个对象在哪个 Dart AOT 函数里汇合。
+```
+
